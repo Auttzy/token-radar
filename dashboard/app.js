@@ -212,8 +212,25 @@
       return a.slug < b.slug ? -1 : a.slug > b.slug ? 1 : 0;
     });
   }
-  function filtered() {
-    return state.q.trim() !== '' || state.category !== 'all' || state.chain !== 'all' || state.verdict !== 'all' || state.scope !== 'all';
+  // Net dollars per hour of farm work. Outside the sandbox it is the model's own
+  // number, so the cards agree with the detail drawer to the cent; the sandbox
+  // recomputes it from the preview net, the same way it re-ranks the board.
+  function perHour(row) {
+    if (!SANDBOX) return row.farm_per_hour_usd;
+    return previewFarm(row).net / row.farm_work_hours;
+  }
+  // The FARM plans paying the most net dollars per hour of work, best first.
+  // watchlistOnly narrows it to the watchlist, for the lede's best-farm line.
+  function farmNext(watchlistOnly) {
+    return DATA.rows.filter(function (r) {
+      if (watchlistOnly && !r.watchlist) return false;
+      return previewFarm(r).verdict === 'FARM';
+    }).sort(function (a, b) { return perHour(b) - perHour(a); });
+  }
+  // How many of the competition's watchlist the board actually covers, counted from
+  // the rows, not assumed: the gate requires the whole watchlist, and the board holds it.
+  function watchlistCovered() {
+    return DATA.rows.filter(function (r) { return r.watchlist; }).length;
   }
 
   function header() {
@@ -228,35 +245,55 @@
   }
 
   function lede() {
-    var v = DATA.verdicts;
+    var c = DATA.curve;
+    var bestWl = farmNext(true)[0];
     return el('section', { class: 'lede' },
       el('div', null,
         el('h1', { text: DATA.board_size + ' protocols record no token. Here is what each launch would be worth, and what farming it costs.' }),
-        el('p', { html: 'The watchlist is the floor: every protocol with at least <b>$' + Math.round(DATA.floor_usd / 1e6) + 'M</b> of TVL and no token on record. The early radar adds <b>' + DATA.early_size + ' more</b> pre-token protocols, below the floor and above it, as long as they are launches and not wrapped, staked or bridged products of a token that already trades. Every farm plan is netted to the dollar at <b>$1,000</b>: the slice, the gas and the forgone yield, so the board says which farms pay and which never do.' })
+        el('p', { html: 'The watchlist is the floor: every protocol with at least <b>$' + Math.round(DATA.floor_usd / 1e6) + 'M</b> of TVL and no token on record. The early radar adds <b>' + DATA.early_size + ' more</b> launches, below the floor and above it. Every farm plan is netted to the dollar at <b>$1,000</b> — slice, gas and forgone yield — so the board says which farms pay and which never do.' })
       ),
-      el('div', { class: 'facts' },
-        el('div', { class: 'fact' }, el('span', { text: 'Watchlist covered' }), el('b', { text: DATA.watchlist_size + ' / ' + DATA.watchlist_size })),
-        el('div', { class: 'fact' }, el('span', { text: 'Pre-token rows scored' }), el('b', { text: String(DATA.board_size) })),
-        el('div', { class: 'fact' }, el('span', { text: 'Set aside by house rule' }), el('b', { text: String(DATA.set_aside) + ' of ' + DATA.pre_token_total })),
-        el('div', { class: 'fact' }, el('span', { text: 'Token trades, kept apart' }), el('b', { text: String(DATA.live_total) })),
-        el('div', { class: 'fact' }, el('span', { text: 'Farm / thin / skip at $1.0K' }), el('b', { text: v.farm + ' / ' + v.thin + ' / ' + v.skip })),
-        el('div', { class: 'fact' }, el('span', { text: 'Blind test (LOO)' }), el('b', { text: 'x' + DATA.curve.loo_median_x + ' · ' + Math.round(DATA.curve.loo_within3 * 100) + '% in 3x' }))
+      el('aside', { class: 'method', 'aria-label': 'How a launch is priced' },
+        el('h2', { text: 'How a launch is priced' }),
+        el('p', { class: 'formula', text: 'implied = 10^' + c.intercept.toFixed(2) + ' x TVL^' + c.slope.toFixed(2) + ' x growth x maturity x sibling' }),
+        el('p', { text: 'Tested blind: leave-one-out miss x' + c.loo_median_x + ' (' + Math.round(c.loo_within3 * 100) + '% within 3x) vs x' + c.flat_loo_median_x + ' (' + Math.round(c.flat_loo_within3 * 100) + '%) for one flat multiple; on ' + c.split_test + ' tokens listed after 2024, x' + c.split_median_x + ' vs x' + c.flat_split_median_x + ' flat.' }),
+        el('p', { text: 'Family multiplier tested and dropped: x3.03 with it, x' + c.loo_median_x + ' without.' }),
+        bestWl ? el('p', { html: 'Best farm on the watchlist: <b>' + bestWl.name + ' +$' + perHour(bestWl).toFixed(2) + '/h</b>' }) : null
       )
     );
   }
 
-  function top5() {
-    var cards = sortedRows(rows()).slice(0, 5).map(function (r) {
+  function statsStrip() {
+    var v = DATA.verdicts;
+    function stat(label, value) {
+      return el('div', { class: 'stat' }, el('span', { text: label }), el('b', { text: value }));
+    }
+    return el('section', { class: 'stats', 'aria-label': 'Board facts' },
+      stat('Watchlist covered', watchlistCovered() + ' / ' + DATA.watchlist_size),
+      stat('Pre-token rows scored', String(DATA.board_size)),
+      stat('Set aside by house rule', DATA.set_aside + ' of ' + DATA.pre_token_total),
+      stat('Token trades, kept apart', String(DATA.live_total)),
+      stat('Farm / thin / skip at $1.0K', v.farm + ' / ' + v.thin + ' / ' + v.skip),
+      stat('Blind test (LOO)', 'x' + DATA.curve.loo_median_x + ' · ' + Math.round(DATA.curve.loo_within3 * 100) + '% in 3x')
+    );
+  }
+
+  function farmNextCards() {
+    var list = farmNext(false).slice(0, 5);
+    if (list.length === 0) return el('section', { class: 'farm-next', 'aria-label': 'Farm next' });
+    var cards = list.map(function (r, i) {
       var f = previewFarm(r);
       return el('button', { class: 'card', type: 'button', onclick: function () { openDetail(r.slug); } },
-        el('span', { class: 'rank', text: '#' + r.rank }),
+        el('span', { class: 'rank', text: 'Farm #' + (i + 1) }),
         el('b', { text: r.name }),
-        el('span', { class: 'val', text: fmtUsd(previewValue(r)) }),
-        el('span', { class: 'sub', text: (r.category || 'Other') + ' · ' + fmtUsd(r.tvl_usd) + ' TVL · ' + f.verdict + ' ' + fmtMoney(f.net) })
+        el('span', { class: 'val', text: '+$' + perHour(r).toFixed(2) + '/h' }),
+        el('span', { class: 'sub', text: (r.category || 'Other') + ' · ' + fmtUsd(r.tvl_usd) + ' TVL · FARM ' + fmtMoney(f.net) + ' net' })
       );
     });
-    if (cards.length === 0) return el('section', { class: 'top5', 'aria-label': 'Top five of the current filter' });
-    return el('section', { class: 'top5', 'aria-label': filtered() ? 'Top five of the current filter' : 'Top five by implied value' }, cards);
+    return el('section', { class: 'farm-next', 'aria-label': 'Farm next: best net dollars per hour' },
+      el('h2', { text: 'Farm next' }),
+      el('p', { class: 'sub', text: 'The five FARM plans paying the most net dollars per hour of work, at $1,000.' }),
+      el('div', { class: 'top5' }, cards)
+    );
   }
 
   function controls() {
@@ -282,7 +319,7 @@
     return el('div', { class: 'controls' },
       el('div', { class: 'field' }, el('label', { for: 'q', text: 'Search' }), search),
       catSelect, chainSelect, verdictSelect, scopeSelect,
-      el('div', { class: 'field' }, el('span', { class: 'sub', text: 'Token status' }), el('div', { class: 'tabs' }, pre, live)),
+      el('div', { class: 'field' }, el('div', { class: 'tabs', 'aria-label': 'Token status' }, pre, live)),
       el('span', { class: 'count', text: state.tab === 'pre-token' ? rows().length + ' rows shown' : DATA.live.length + ' live-token protocols' })
     );
   }
@@ -353,7 +390,7 @@
     return el('div', { class: 'panel' },
       el('div', { class: 'table-wrap' },
         el('table', null,
-          el('caption', { class: 'sub', text: 'Pre-token protocols, strongest implied value first. Bar: implied value (dot) and P10-P90 band, log scale $1M-$1B. $1K slice: what $1,000 gets if 10% of the launch goes to depositors. Net: slice minus fees and forgone 4% yield. Select a row for its model and farm plan.' }),
+          el('caption', { class: 'sub', text: 'Strongest implied value first. Bar: implied value (dot) and P10-P90 band, log $1M-$1B. $1K slice: what $1,000 gets if 10% of the launch goes to depositors. Net: slice minus fees and forgone 4% yield. Select a row for its plan.' }),
           el('thead', null, el('tr', null,
             sortHeader('implied', 'Rank'),
             sortHeader('name', 'Protocol'),
@@ -591,7 +628,8 @@
     var shell = el('div', { class: 'shell' });
     shell.appendChild(header());
     shell.appendChild(lede());
-    shell.appendChild(top5());
+    shell.appendChild(statsStrip());
+    shell.appendChild(farmNextCards());
     shell.appendChild(controls());
     shell.appendChild(state.tab === 'pre-token' ? boardTable() : liveTable());
     if (state.tab === 'pre-token') shell.appendChild(modelPanel());
