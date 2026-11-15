@@ -12,26 +12,33 @@
 // size curve fitted to the traded tokens, not a flat multiple: the market pays less per dollar
 // of TVL as a protocol gets bigger, so a $2.75B protocol is worth far less than 2.75B times a
 // $100M protocol's multiple. The curve is fitted here, from this snapshot, and tested blind
-// before it prices anything:
+// before it prices anything. The fit is robust (Huber, iteratively reweighted): a token far off
+// the curve is downweighted, so one odd token cannot bend it.
 //
 //   comparables  live-token protocols, not an exchange, not a wrapped/staked/bridged product,
 //                market cap and TVL both positive, market-cap/TVL in [0.005, 5]
-//   curve        log10(mcap) = a + b * log10(tvl), ordinary least squares on the comparables
-//   family       the median log-residual of the traded tokens in the row's category, shrunk by
-//                n / (n + 3) toward no effect; fewer than 3 comparables means no family effect
+//   curve        log10(mcap) = a + b * log10(tvl), Huber fit on the comparables
 //   growth       = clamp(change_7d, -60, 120) per cent
 //   growthMult   = 1 + (growth / 100) * 0.6
 //   maturity     = 0.70 + min(age_days, 1095) / 1095 * 0.30   (age unknown: 365 days)
 //   sibling      the median log-residual of the traded tokens that share the protocol's first
 //                word, shrunk the same way, clamped to [0.25, 4]; no such token means 1.00
-//   implied      = max(1, round(10^(a + b * log10(tvl)) * family * growthMult * maturity * sibling))
+//   implied      = max(1, round(10^(a + b * log10(tvl)) * growthMult * maturity * sibling))
 //
-// The blind test is leave-one-out: each comparable is priced by a curve fitted without it, and
-// the same test prices it by one flat multiple (the global median market-cap/TVL). A second
-// test fits the curve on protocols listed before 2024 and prices the ones listed after. The
-// curve has to beat the flat multiple on both, or the model is not one to trust. The band
-// around each implied value is the leave-one-out residual's 10th to 90th percentile, so the
-// board states its own uncertainty instead of hiding it.
+// There is deliberately no family multiplier. Round 3's model carried one — the median
+// log-residual of the traded tokens in the row's category, shrunk toward no effect — and it
+// was tested blind, the same way the curve is: pricing each traded token with the whole model
+// fitted without it. The family effect failed the test. With it the full model priced a
+// held-out token at a median miss of x3.03, within 3x 49% of the time; without it x2.87 and
+// 56%, and the time split agreed (within 3x 59% with it, 62% without). A category effect
+// that does not survive being held out is noise, so the board carries none.
+//
+// The blind test is the whole model, not the curve alone: each comparable is priced by the
+// full pipeline fitted without it (leave-one-out), and a second test fits on protocols listed
+// before 2024 and prices the ones listed after. The same tests price each token by one flat
+// multiple for every token. The band around each implied value is the leave-one-out
+// residual's 10th to 90th percentile, so the board states its own uncertainty instead of
+// hiding it.
 //
 // Farm plans are derived the same way: the protocol's category picks the action, its first
 // chain picks where the action happens and what gas costs, its TVL picks nothing about the
@@ -107,7 +114,7 @@ export const MODEL: ModelConstants = {
 };
 
 /** The model's version label: the dashboard names it and the page recomputes with it. */
-export const MODEL_VERSION = 'radar-3-curve';
+export const MODEL_VERSION = 'radar-4-huber';
 
 /** How many live-token protocols the Live token view carries, by market cap. */
 export const LIVE_ROWS = 24;
@@ -141,8 +148,6 @@ export interface BoardRow {
   signals: string[];
   model: {
     curve_value_usd: number;
-    family_multiplier: number;
-    family_comparables: number;
     growth_pct: number;
     growth_multiplier: number;
     maturity_multiplier: number;
@@ -179,8 +184,6 @@ export interface RadarRow {
   age_days: number | null;
   implied_value_usd: number;
   curve_value_usd: number;
-  family_multiplier: number;
-  family_comparables: number;
   growth_multiplier: number;
   maturity_multiplier: number;
   sibling_multiplier: number;
@@ -210,13 +213,6 @@ export interface LiveRow {
   change_7d: number | null;
 }
 
-/** One category's family multiplier, for the model panel. */
-export interface FamilyRow {
-  category: string;
-  multiplier: number;
-  comparables: number;
-}
-
 /** One comparable point, for the scatter plot. */
 export interface ComparablePoint {
   slug: string;
@@ -226,7 +222,10 @@ export interface ComparablePoint {
   mcap_usd: number;
 }
 
-/** The fitted size curve and its blind tests, for the model panel. */
+/** The fitted size curve and the whole model's blind tests, for the model panel. The
+ * loo_* and split_* numbers price each held-out token with the full pipeline (curve,
+ * growth, maturity, sibling); the flat_* numbers price the same tokens with one flat
+ * multiple for every token. The band is the full pipeline's leave-one-out residuals. */
 export interface CurveFit {
   intercept: number;
   slope: number;
@@ -262,7 +261,6 @@ export interface RadarData {
   live_total: number;
   set_aside: number;
   curve: CurveFit;
-  families: FamilyRow[];
   verdicts: { farm: number; thin: number; skip: number };
   comps: ComparablePoint[];
   rows: RadarRow[];
@@ -350,7 +348,7 @@ export function cleanComparables(protocols: SnapshotProtocol[], model: ModelCons
 }
 
 /** Least squares on log10(market cap) against log10(TVL): the size curve's intercept and slope. */
-export function fitCurve(points: SnapshotProtocol[]): { intercept: number; slope: number } {
+function olsCurve(points: SnapshotProtocol[]): { intercept: number; slope: number } {
   const n = points.length;
   let mx = 0;
   let my = 0;
@@ -371,6 +369,56 @@ export function fitCurve(points: SnapshotProtocol[]): { intercept: number; slope
   return { intercept: my - slope * mx, slope };
 }
 
+/** Weighted least squares on log10(market cap) against log10(TVL). */
+function wlsCurve(points: SnapshotProtocol[], weights: number[]): { intercept: number; slope: number } {
+  let sw = 0;
+  let mx = 0;
+  let my = 0;
+  for (let i = 0; i < points.length; i++) {
+    sw += weights[i]!;
+    mx += weights[i]! * Math.log10(points[i]!.tvl_usd);
+    my += weights[i]! * Math.log10(points[i]!.mcap_usd!);
+  }
+  mx /= sw;
+  my /= sw;
+  let sxy = 0;
+  let sxx = 0;
+  for (let i = 0; i < points.length; i++) {
+    const dx = Math.log10(points[i]!.tvl_usd) - mx;
+    sxy += weights[i]! * dx * (Math.log10(points[i]!.mcap_usd!) - my);
+    sxx += weights[i]! * dx * dx;
+  }
+  const slope = sxx === 0 ? 0 : sxy / sxx;
+  return { intercept: my - slope * mx, slope };
+}
+
+/**
+ * The size curve, fitted robustly: ordinary least squares first, then Huber's iteratively
+ * reweighted least squares (tuning constant 1.345, scale from the median absolute residual),
+ * so a token far off the curve is downweighted instead of bending it. One odd token — a
+ * bridged wrapper's market cap, a dead token's last print — cannot move the curve.
+ */
+export function fitCurve(points: SnapshotProtocol[]): { intercept: number; slope: number } {
+  let fit = olsCurve(points);
+  for (let it = 0; it < 30; it++) {
+    const residuals = points.map(
+      (p) => Math.log10(p.mcap_usd!) - (fit.intercept + fit.slope * Math.log10(p.tvl_usd)),
+    );
+    const scale = 1.4826 * median(residuals.map(Math.abs)) || 1;
+    const weights = residuals.map((r) => {
+      const u = r / (1.345 * scale);
+      return Math.abs(u) <= 1 ? 1 : 1 / Math.abs(u);
+    });
+    const next = wlsCurve(points, weights);
+    if (Math.abs(next.intercept - fit.intercept) < 1e-9 && Math.abs(next.slope - fit.slope) < 1e-9) {
+      fit = next;
+      break;
+    }
+    fit = next;
+  }
+  return fit;
+}
+
 /** The curve's value for a TVL: 10^(intercept + slope * log10(TVL)). */
 export function curveValue(fit: { intercept: number; slope: number }, tvl: number): number {
   return Math.pow(10, fit.intercept + fit.slope * Math.log10(tvl));
@@ -379,27 +427,6 @@ export function curveValue(fit: { intercept: number; slope: number }, tvl: numbe
 /** A protocol's log-residual against the curve: how far its market cap sits from the curve. */
 function residual(fit: { intercept: number; slope: number }, p: SnapshotProtocol): number {
   return Math.log10(p.mcap_usd!) - (fit.intercept + fit.slope * Math.log10(p.tvl_usd));
-}
-
-/** One category's family multiplier: the median residual of its traded tokens, shrunk toward 1. */
-export function familyMultipliers(
-  points: SnapshotProtocol[],
-  fit: { intercept: number; slope: number },
-  model: ModelConstants,
-): Map<string, { multiplier: number; comparables: number }> {
-  const byCategory = new Map<string, number[]>();
-  for (const p of points) {
-    const list = byCategory.get(p.category ?? 'Other') ?? [];
-    list.push(residual(fit, p));
-    byCategory.set(p.category ?? 'Other', list);
-  }
-  const out = new Map<string, { multiplier: number; comparables: number }>();
-  for (const [category, rs] of byCategory) {
-    if (rs.length < model.min_comparables) continue;
-    const shrink = rs.length / (rs.length + model.shrink_k);
-    out.set(category, { multiplier: round4(Math.pow(10, median(rs) * shrink)), comparables: rs.length });
-  }
-  return out;
 }
 
 /** The first word of a name, lowercased: the brand a protocol shares with its siblings. */
@@ -424,91 +451,92 @@ export function siblingFactor(
   return round4(Math.min(model.sibling_cap, Math.max(model.sibling_floor, factor)));
 }
 
-/** A blind test: fit on the training set, price the held-out tokens, and score the misses. */
-function blindTest(
-  train: SnapshotProtocol[],
-  test: SnapshotProtocol[],
-  flatMedian: number,
-): { medianX: number; within3: number; within10: number; flatMedianX: number; flatWithin3: number; flatWithin10: number } {
-  const fit = fitCurve(train);
-  const errs: number[] = [];
-  const flatErrs: number[] = [];
-  for (const p of test) {
-    errs.push(Math.abs(Math.log10(p.mcap_usd!) - Math.log10(curveValue(fit, p.tvl_usd))));
-    flatErrs.push(Math.abs(Math.log10(p.mcap_usd!) - Math.log10(p.tvl_usd * flatMedian)));
-  }
-  errs.sort((a, b) => a - b);
-  flatErrs.sort((a, b) => a - b);
-  const log3 = Math.log10(3);
-  return {
-    medianX: Math.pow(10, median(errs)),
-    within3: errs.filter((e) => e <= log3).length / errs.length,
-    within10: errs.filter((e) => e <= 1).length / errs.length,
-    flatMedianX: Math.pow(10, median(flatErrs)),
-    flatWithin3: flatErrs.filter((e) => e <= log3).length / flatErrs.length,
-    flatWithin10: flatErrs.filter((e) => e <= 1).length / flatErrs.length,
-  };
+/** What impliedValue needs from a fit: the curve and the band around it. */
+export interface FittedModel {
+  fit: { intercept: number; slope: number };
+  curve: { band_p10: number; band_p90: number };
 }
 
-/** The curve, its family multipliers and its blind tests, all fitted from the snapshot. */
+/** The fitted size curve and the whole model's blind tests, all fitted from the snapshot. */
 export function fitModel(
   snapshot: Snapshot,
   model: ModelConstants,
 ): {
   fit: { intercept: number; slope: number };
   comps: SnapshotProtocol[];
-  families: Map<string, { multiplier: number; comparables: number }>;
   curve: CurveFit;
 } {
   const comps = cleanComparables(snapshot.protocols, model);
   const fit = fitCurve(comps);
-  const families = familyMultipliers(comps, fit, model);
-  const flatMedian = median(comps.map((p) => p.mcap_usd! / p.tvl_usd));
-  // Leave-one-out: every comparable priced by a curve fitted without it. The signed residuals
-  // are the band; their absolute values are the curve's blind error, against the same test run
-  // with one flat multiple for every token.
+  const log3 = Math.log10(3);
+  const frac = (xs: number[], lim: number): number => xs.filter((e) => e <= lim).length / xs.length;
+  const summarize = (signed: number[]) => {
+    const abs = signed.map(Math.abs).sort((a, b) => a - b);
+    return {
+      medianX: round2(Math.pow(10, median(abs))),
+      within3: round4(frac(abs, log3)),
+      within10: round4(frac(abs, 1)),
+    };
+  };
+  // Price one token with a given curve, through the whole pipeline (growth, maturity,
+  // sibling): the blind tests test the model that prices the board, not the curve alone.
+  // The band is a dummy here: only the implied value is read.
+  const priceFull = (p: SnapshotProtocol, f: { intercept: number; slope: number }, protocols: SnapshotProtocol[]) =>
+    impliedValue(p, snapshot.as_of, { fit: f, curve: { band_p10: 0, band_p90: 0 } }, protocols, model).implied;
+  // Leave-one-out: every comparable priced by the full pipeline fitted without it. The signed
+  // residuals are the band; their absolute values are the model's blind error, against the
+  // same test run with one flat multiple for every token.
   const looSigned: number[] = [];
   const looFlat: number[] = [];
   for (let i = 0; i < comps.length; i++) {
+    const held = comps[i]!;
     const rest = comps.filter((_, j) => j !== i);
+    const restProtocols = snapshot.protocols.filter((p) => p.slug !== held.slug);
     const f = fitCurve(rest);
-    looSigned.push(Math.log10(comps[i]!.mcap_usd!) - Math.log10(curveValue(f, comps[i]!.tvl_usd)));
+    looSigned.push(Math.log10(held.mcap_usd!) - Math.log10(priceFull(held, f, restProtocols)));
     // The flat comparison refits its median on the same training set, so it never sees the
     // token it is pricing either.
     const flatRest = median(rest.map((p) => p.mcap_usd! / p.tvl_usd));
-    looFlat.push(Math.abs(Math.log10(comps[i]!.mcap_usd!) - Math.log10(comps[i]!.tvl_usd * flatRest)));
+    looFlat.push(Math.abs(Math.log10(held.mcap_usd!) - Math.log10(held.tvl_usd * flatRest)));
   }
-  const looAbs = looSigned.map(Math.abs).sort((a, b) => a - b);
+  const loo = summarize(looSigned);
+  const looFlatSum = summarize(looFlat);
   const looSorted = [...looSigned].sort((a, b) => a - b);
-  const looFlatSorted = [...looFlat].sort((a, b) => a - b);
   const bandP10 = looSorted[Math.floor(looSorted.length * 0.1)]!;
   const bandP90 = looSorted[Math.floor(looSorted.length * 0.9)]!;
-  const log3 = Math.log10(3);
-  const frac = (xs: number[], lim: number): number => xs.filter((e) => e <= lim).length / xs.length;
   // Time split: fit on protocols listed before 2024, price the ones listed after.
   const train = comps.filter((p) => p.listed_at !== null && p.listed_at < '2024-01-01');
   const test = comps.filter((p) => p.listed_at !== null && p.listed_at >= '2024-01-01');
-  const split = blindTest(train, test, flatMedian);
+  const trainFit = fitCurve(train);
+  const testProtocols = snapshot.protocols.filter((p) => !test.some((t) => t.slug === p.slug));
+  const flatTrain = median(train.map((p) => p.mcap_usd! / p.tvl_usd));
+  const splitSigned: number[] = [];
+  const splitFlat: number[] = [];
+  for (const p of test) {
+    splitSigned.push(Math.log10(p.mcap_usd!) - Math.log10(priceFull(p, trainFit, testProtocols)));
+    splitFlat.push(Math.abs(Math.log10(p.mcap_usd!) - Math.log10(p.tvl_usd * flatTrain)));
+  }
+  const split = summarize(splitSigned);
+  const splitFlatSum = summarize(splitFlat);
   return {
     fit,
     comps,
-    families,
     curve: {
       intercept: round4(fit.intercept),
       slope: round4(fit.slope),
       comparables: comps.length,
-      loo_median_x: round2(Math.pow(10, median(looAbs))),
-      loo_within3: round4(frac(looAbs, log3)),
-      loo_within10: round4(frac(looAbs, 1)),
-      flat_loo_median_x: round2(Math.pow(10, median(looFlatSorted))),
-      flat_loo_within3: round4(frac(looFlatSorted, log3)),
-      flat_loo_within10: round4(frac(looFlatSorted, 1)),
+      loo_median_x: loo.medianX,
+      loo_within3: loo.within3,
+      loo_within10: loo.within10,
+      flat_loo_median_x: looFlatSum.medianX,
+      flat_loo_within3: looFlatSum.within3,
+      flat_loo_within10: looFlatSum.within10,
       split_train: train.length,
       split_test: test.length,
-      split_median_x: round2(split.medianX),
-      split_within3: round4(split.within3),
-      flat_split_median_x: round2(split.flatMedianX),
-      flat_split_within3: round4(split.flatWithin3),
+      split_median_x: split.medianX,
+      split_within3: split.within3,
+      flat_split_median_x: splitFlatSum.medianX,
+      flat_split_within3: splitFlatSum.within3,
       band_p10: round4(bandP10),
       band_p90: round4(bandP90),
     },
@@ -519,14 +547,12 @@ export function fitModel(
 export function impliedValue(
   protocol: SnapshotProtocol,
   asOf: string,
-  fitted: ReturnType<typeof fitModel>,
+  fitted: FittedModel,
   protocols: SnapshotProtocol[],
   model: ModelConstants,
 ): {
   implied: number;
   curve: number;
-  family: number;
-  familyComparables: number;
   growthPct: number;
   growthMult: number;
   maturityMult: number;
@@ -537,9 +563,6 @@ export function impliedValue(
 } {
   const age = ageDays(asOf, protocol.listed_at);
   const curve = curveValue(fitted.fit, protocol.tvl_usd);
-  const fam = fitted.families.get(protocol.category ?? 'Other');
-  const family = fam !== undefined ? fam.multiplier : 1;
-  const familyComparables = fam !== undefined ? fam.comparables : 0;
   const rawGrowth = finite(protocol.change_7d, 0);
   const growthPct = Math.min(model.growth_cap, Math.max(model.growth_floor, rawGrowth));
   const growthMult = 1 + (growthPct / 100) * model.growth_weight;
@@ -547,12 +570,10 @@ export function impliedValue(
   const maturityMult =
     model.maturity_floor + (Math.min(Math.max(ageForModel, 0), model.maturity_days) / model.maturity_days) * model.maturity_range;
   const sibling = siblingFactor(protocol, protocols, fitted.fit, model);
-  const implied = Math.max(1, Math.round(curve * family * growthMult * maturityMult * sibling));
+  const implied = Math.max(1, Math.round(curve * growthMult * maturityMult * sibling));
   return {
     implied,
     curve,
-    family,
-    familyComparables,
     growthPct,
     growthMult,
     maturityMult,
@@ -585,8 +606,6 @@ function ordinal(n: number): string {
 interface ScoredValue {
   implied: number;
   curve: number;
-  family: number;
-  familyComparables: number;
   growthPct: number;
   growthMult: number;
   maturityMult: number;
@@ -610,15 +629,9 @@ export function signalsFor(
 ): string[] {
   const out: string[] = [];
   out.push(`TVL ${fmtUsd(p.tvl_usd)} — the ${ordinal(tvlRank)} largest pre-token protocol on a board of ${boardSize}.`);
-  if (v.familyComparables > 0) {
-    out.push(
-      `The size curve reads ${fmtUsd(v.curve)} off ${fmtUsd(p.tvl_usd)} of TVL; ${p.category ?? 'Other'} trades at ${v.family.toFixed(2)}x the curve, the shrunk median of ${v.familyComparables} live comparables.`,
-    );
-  } else {
-    out.push(
-      `The size curve reads ${fmtUsd(v.curve)} off ${fmtUsd(p.tvl_usd)} of TVL; ${p.category ?? 'Other'} has too few live comparables for a family effect.`,
-    );
-  }
+  out.push(
+    `The size curve reads ${fmtUsd(v.curve)} off ${fmtUsd(p.tvl_usd)} of TVL; the curve is fitted robustly, so one odd token cannot bend it.`,
+  );
   const growthSign = v.growthPct > 0 ? '+' : '';
   out.push(`Seven-day TVL change ${growthSign}${v.growthPct.toFixed(2)}%: growth multiplies the value by ${v.growthMult.toFixed(3)}.`);
   if (v.age !== null) {
@@ -692,8 +705,6 @@ export function buildBoard(
     signals: signalsFor(s.p, s, tvlRank.get(s.p.slug) ?? 0, scored.length),
     model: {
       curve_value_usd: s.curve,
-      family_multiplier: round4(s.family),
-      family_comparables: s.familyComparables,
       growth_pct: s.growthPct,
       growth_multiplier: round4(s.growthMult),
       maturity_multiplier: round4(s.maturityMult),
@@ -932,8 +943,6 @@ export function radarRow(row: BoardRow): RadarRow {
     age_days: row.age_days,
     implied_value_usd: row.implied_value_usd,
     curve_value_usd: row.model.curve_value_usd,
-    family_multiplier: row.model.family_multiplier,
-    family_comparables: row.model.family_comparables,
     growth_multiplier: row.model.growth_multiplier,
     maturity_multiplier: row.model.maturity_multiplier,
     sibling_multiplier: row.model.sibling_multiplier,
@@ -960,9 +969,6 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
   const live = liveRows(snapshot);
   const early = board.filter((r) => !snapshot.watchlist.includes(r.slug)).length;
   const preTokenTotal = snapshot.protocols.filter(isPreToken).length;
-  const familyRows: FamilyRow[] = [...fitted.families.entries()]
-    .map(([category, v]) => ({ category, multiplier: v.multiplier, comparables: v.comparables }))
-    .sort((a, b) => b.multiplier - a.multiplier);
   const verdicts = { farm: 0, thin: 0, skip: 0 };
   for (const r of board) {
     if (r.farm.verdict === 'FARM') verdicts.farm++;
@@ -986,7 +992,6 @@ export function buildRadar(snapshot: Snapshot, model: ModelConstants = MODEL): {
     live_total: snapshot.protocols.length - preTokenTotal,
     set_aside: preTokenTotal - board.length,
     curve: fitted.curve,
-    families: familyRows,
     verdicts,
     comps,
     rows: board.map(radarRow),
