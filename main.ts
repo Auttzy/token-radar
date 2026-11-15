@@ -82,12 +82,20 @@ for (const name of shots) {
 // The dossier is written last: the scorer rebuilds it from this /output and compares bytes.
 writeFileSync(join(out, 'dossier.json'), buildDossier(out, { text_max_bytes: TEXT_MAX_BYTES, screenshots: SCREENSHOT_CAPS, dashboard: { max_files: 400, max_bytes: 4_194_304 } }));
 
-/** The run's one-line summary: the top five rows and the multiples that priced them. */
+/** The run's one-line summary: the top five rows and the curve that priced them. */
 function printSummary(board: import('./lib/model.ts').BoardRow[], radar: import('./lib/model.ts').RadarData): void {
   const top = board.slice(0, 5).map((r) => `#${r.rank} ${r.slug} $${r.implied_value_usd.toLocaleString('en-US')}`).join(', ');
-  const multiples = radar.multiples.map((m) => `${m.category} ${m.multiple.toFixed(2)}x (${m.comparables})`).join(', ');
+  const curve = radar.curve;
   process.stdout.write(`token radar: top five: ${top}\n`);
-  process.stdout.write(`token radar: multiples: ${multiples}; global ${radar.global_multiple.toFixed(2)}x\n`);
+  process.stdout.write(
+    `token radar: curve 10^${curve.intercept} x TVL^${curve.slope} on ${curve.comparables} comparables; ` +
+      `blind LOO x${curve.loo_median_x} within 3x ${(curve.loo_within3 * 100).toFixed(0)}% vs flat x${curve.flat_loo_median_x} within 3x ${(curve.flat_loo_within3 * 100).toFixed(0)}%; ` +
+      `time split x${curve.split_median_x} vs flat x${curve.flat_split_median_x}\n`,
+  );
+  process.stdout.write(
+    `token radar: verdicts FARM ${radar.verdicts.farm} THIN ${radar.verdicts.thin} SKIP ${radar.verdicts.skip}; ` +
+      `${radar.set_aside} of ${radar.pre_token_total} pre-token protocols set aside\n`,
+  );
 }
 
 printSummary(board, radar);
