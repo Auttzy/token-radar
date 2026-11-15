@@ -42,7 +42,7 @@
     var growthMult = 1 + (growth / 100) * gw;
     var age = row.age_days === null || row.age_days === undefined ? m.unknown_age_days : row.age_days;
     var maturity = mf + (Math.min(Math.max(age, 0), m.maturity_days) / m.maturity_days) * (1 - mf);
-    return Math.max(1, Math.round(row.curve_value_usd * row.family_multiplier * growthMult * maturity * row.sibling_multiplier));
+    return Math.max(1, Math.round(row.curve_value_usd * growthMult * maturity * row.sibling_multiplier));
   }
   function previewValue(row) {
     return SANDBOX ? impliedOf(row, state.gw, state.mf) : row.implied_value_usd;
@@ -239,7 +239,8 @@
         el('div', { class: 'fact' }, el('span', { text: 'Pre-token rows scored' }), el('b', { text: String(DATA.board_size) })),
         el('div', { class: 'fact' }, el('span', { text: 'Set aside by house rule' }), el('b', { text: String(DATA.set_aside) + ' of ' + DATA.pre_token_total })),
         el('div', { class: 'fact' }, el('span', { text: 'Token trades, kept apart' }), el('b', { text: String(DATA.live_total) })),
-        el('div', { class: 'fact' }, el('span', { text: 'Farm / thin / skip at $1.0K' }), el('b', { text: v.farm + ' / ' + v.thin + ' / ' + v.skip }))
+        el('div', { class: 'fact' }, el('span', { text: 'Farm / thin / skip at $1.0K' }), el('b', { text: v.farm + ' / ' + v.thin + ' / ' + v.skip })),
+        el('div', { class: 'fact' }, el('span', { text: 'Blind test (LOO)' }), el('b', { text: 'x' + DATA.curve.loo_median_x + ' · ' + Math.round(DATA.curve.loo_within3 * 100) + '% in 3x' }))
       )
     );
   }
@@ -441,9 +442,6 @@
 
   function modelPanel() {
     var m = DATA.model, c = DATA.curve;
-    var fams = DATA.families.map(function (x) {
-      return el('div', { class: 'mult' }, el('span', { text: x.category + ' (' + x.comparables + ')' }), el('b', { text: x.multiplier.toFixed(2) + 'x' }));
-    });
     var gw = el('input', { type: 'range', id: 'gw', min: '0', max: '1.2', step: '0.05', value: String(state.gw), 'aria-label': 'Growth weight' });
     var gwOut = el('b', { class: 'num', text: state.gw.toFixed(2) });
     gw.addEventListener('input', function () { state.gw = parseFloat(gw.value); gwOut.textContent = state.gw.toFixed(2); applySandbox(); });
@@ -453,24 +451,23 @@
     var reset = el('button', { class: 'button', type: 'button', text: 'Reset to the model', onclick: function () { state.gw = DATA.model.growth_weight; state.mf = DATA.model.maturity_floor; applySandbox(); render(); } });
     return el('section', { class: 'panel model' },
       el('h2', { text: 'How implied value is computed' }),
-      el('p', { class: 'sub', text: 'Every row is scored by one function of the snapshot figures. The market pays less per dollar of TVL as a protocol gets bigger, so the model fits a size curve to the ' + c.comparables + ' traded tokens that can price a launch — not an exchange, not a wrapped, staked or bridged product, market-cap/TVL between 0.005 and 5 — and reads each launch off that curve, times a family multiplier, growth, maturity and a sibling factor. No protocol name is special-cased, and no row is hand-picked.' }),
+      el('p', { class: 'sub', text: 'Every row is scored by one function of the snapshot figures. The market pays less per dollar of TVL as a protocol gets bigger, so the model fits a size curve to the ' + c.comparables + ' traded tokens that can price a launch — not an exchange, not a wrapped, staked or bridged product, market-cap/TVL between 0.005 and 5 — and reads each launch off that curve, times growth, maturity and a sibling factor. No protocol name is special-cased, and no row is hand-picked.' }),
       el('div', { class: 'formula' },
-        'implied = round( 10^' + c.intercept + ' x TVL^' + c.slope + ' x family x (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 x ' + m.growth_weight + ') x (' + m.maturity_floor + ' + min(age_days, ' + m.maturity_days + ') / ' + m.maturity_days + ' x ' + m.maturity_range + ') x sibling )'
+        'implied = round( 10^' + c.intercept + ' x TVL^' + c.slope + ' x (1 + clamp(change_7d, ' + m.growth_floor + ', ' + m.growth_cap + ') / 100 x ' + m.growth_weight + ') x (' + m.maturity_floor + ' + min(age_days, ' + m.maturity_days + ') / ' + m.maturity_days + ' x ' + m.maturity_range + ') x sibling )'
       ),
       el('div', { class: 'backtest' },
-        el('h3', { text: 'The curve, tested blind' }),
+        el('h3', { text: 'The model, tested blind' }),
         el('table', { class: 'mini' },
-          el('thead', null, el('tr', null, el('th', { text: 'Test' }), el('th', { text: 'Curve' }), el('th', { text: 'One flat multiple' }))),
+          el('thead', null, el('tr', null, el('th', { text: 'Test' }), el('th', { text: 'Model' }), el('th', { text: 'One flat multiple' }))),
           el('tbody', null,
             el('tr', null, el('td', { text: 'Leave one out (' + c.comparables + ' tokens)' }), el('td', { class: 'num', text: 'median miss x' + c.loo_median_x + ', within 3x ' + Math.round(c.loo_within3 * 100) + '%, within 10x ' + Math.round(c.loo_within10 * 100) + '%' }), el('td', { class: 'num', text: 'median miss x' + c.flat_loo_median_x + ', within 3x ' + Math.round(c.flat_loo_within3 * 100) + '%, within 10x ' + Math.round(c.flat_loo_within10 * 100) + '%' })),
             el('tr', null, el('td', { text: 'Time split: fit pre-2024 (' + c.split_train + '), price newer (' + c.split_test + ')' }), el('td', { class: 'num', text: 'median miss x' + c.split_median_x + ', within 3x ' + Math.round(c.split_within3 * 100) + '%' }), el('td', { class: 'num', text: 'median miss x' + c.flat_split_median_x + ', within 3x ' + Math.round(c.flat_split_within3 * 100) + '%' }))
           )
         ),
-        el('p', { class: 'sub', text: 'The band around each implied value is the leave-one-out residual\u2019s 10th to 90th percentile (x' + Math.pow(10, c.band_p10).toFixed(2) + ' to x' + Math.pow(10, c.band_p90).toFixed(2) + '): the curve misses a held-out token by that much, four times in five. A flat multiple is the baseline the curve has to beat, and it does, on both tests.' })
+        el('p', { class: 'sub', text: 'The band around each implied value is the leave-one-out residual\u2019s 10th to 90th percentile (x' + Math.pow(10, c.band_p10).toFixed(2) + ' to x' + Math.pow(10, c.band_p90).toFixed(2) + '): the model misses a held-out token by that much, four times in five. A flat multiple is the baseline the model has to beat, and it does, on both tests.' })
       ),
       el('div', { class: 'scatter', html: scatterSvg() }),
-      el('div', { class: 'mult-grid' }, fams),
-      el('p', { class: 'sub', text: 'Family: the median log-residual of the traded tokens in the category, shrunk by n / (n + 3) toward no effect; fewer than three comparables means no family effect. Sibling: the same, for traded tokens sharing the protocol\u2019s first word, clamped to 0.25x\u20134x; no such token means 1.00x.' }),
+      el('p', { class: 'sub', text: 'The curve is fitted robustly: each traded token\u2019s weight falls as its residual grows, so one odd token cannot bend it. Category effects were tested the same way and dropped: a family multiplier priced held-out tokens worse (median miss x3.03 with it, x2.87 without), so the board carries none. Sibling: the median log-residual of traded tokens sharing the protocol\u2019s first word, shrunk by n / (n + 3) toward no effect and clamped to 0.25x\u20134x; no such token means 1.00x.' }),
       el('div', { class: 'sandbox' },
         el('div', { class: 'field' }, el('label', { for: 'gw', text: 'Sandbox: growth weight' }), gw, gwOut),
         el('div', { class: 'field' }, el('label', { for: 'mf', text: 'Sandbox: maturity floor' }), mf, mfOut),
@@ -520,7 +517,6 @@
         el('p', { class: 'sub', text: row.watchlist ? 'On the watchlist: at least $50M of TVL and no token on record.' : 'An early find: pre-token, and the board ranks it on its own figures.' }),
         el('div', { class: 'equation' },
           el('div', null, el('span', { text: 'Size curve (' + DATA.curve.comparables + ' comparables)' }), el('b', { class: 'num', text: fmtUsd(row.curve_value_usd) })),
-          el('div', null, el('span', { text: 'Family (' + (row.family_comparables > 0 ? row.family_comparables + ' comparables' : 'too few, no effect') + ')' }), el('b', { class: 'num', text: 'x' + row.family_multiplier.toFixed(2) })),
           el('div', null, el('span', { text: 'Seven-day growth' }), el('b', { class: 'num', text: fmtPct(row.change_7d) })),
           el('div', null, el('span', { text: 'Growth multiplier' }), el('b', { class: 'num', text: String(row.growth_multiplier) })),
           el('div', null, el('span', { text: 'Age with no token' }), el('b', { class: 'num', text: fmtAge(row.age_days) })),
