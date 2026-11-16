@@ -34,7 +34,7 @@ body {
   text-wrap: pretty;
 }
 h1, h2, h3 { margin: 0; letter-spacing: -0.02em; text-wrap: balance; }
-h1 { font-size: 30px; line-height: 1.15; font-weight: 650; }
+h1 { font-size: 28px; line-height: 1.15; font-weight: 650; }
 h2 { font-size: 20px; line-height: 1.2; font-weight: 650; }
 h3 { font-size: 16px; line-height: 1.25; font-weight: 650; }
 p { margin: 0; }
@@ -51,67 +51,55 @@ a { color: var(--accent-2); }
 .shell { max-width: 1320px; margin: 0 auto; padding: var(--step-4) var(--step-6) var(--step-7); }
 .top {
   display: flex; align-items: flex-start; justify-content: space-between; gap: var(--step-5);
-  padding-bottom: var(--step-2); border-bottom: 1px solid var(--border);
+  padding-bottom: 4px; border-bottom: 1px solid var(--border);
 }
 .brand { display: flex; align-items: center; gap: var(--step-3); }
 .mark { width: 12px; height: 12px; border-radius: 50%; background: var(--accent); box-shadow: 0 0 0 4px rgba(52, 211, 153, 0.18); flex: none; }
 .brand-name { font-family: var(--font-num); font-size: 13px; letter-spacing: 0.14em; text-transform: uppercase; color: var(--muted); }
 .top-meta { display: flex; flex-wrap: wrap; gap: var(--step-3); justify-content: flex-end; color: var(--muted); font-size: 13px; }
 .top-meta span { white-space: nowrap; }
-.lede { display: grid; grid-template-columns: minmax(0, 1.35fr) minmax(280px, 0.65fr); gap: var(--step-6); padding: var(--step-4) 0 var(--step-3); }
-.lede p { color: var(--muted); max-width: 62ch; margin-top: var(--step-2); }
+/* The lede is one full-width column now: headline plus two lines of copy, so the
+   board starts in the first screen. The method lives in a band below it. */
+.lede { padding: var(--step-2) 0 6px; }
+.lede p { color: var(--muted); margin-top: var(--step-2); }
 .lede p b { color: var(--ink); font-weight: 600; }
-/* The method box: the formula, the blind test in plain words, the dropped family
-   effect and the best farm on the watchlist — what the top boards all show up top. */
-.method {
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-panel);
-  padding: var(--step-3) var(--step-4); display: grid; gap: var(--step-2); align-content: start;
+/* The method band: the formula, the blind test in plain words, the dropped family
+   effect and the best farm on the watchlist — two lines where the old method box
+   cost a whole column. */
+.method-band {
+  padding: var(--step-2) 0; border-top: 1px solid var(--border);
+  font-size: 13px; line-height: 1.55; color: var(--muted);
 }
-.method h2 { font-size: 15px; }
-.method p { margin-top: 0; font-size: 13px; line-height: 1.5; }
-.method .formula { color: var(--accent-2); font-size: 13px; }
-.method p b { color: var(--ink); font-weight: 600; }
+.method-band .formula { color: var(--accent-2); font-family: var(--font-num); }
+.method-band b { color: var(--ink); font-weight: 600; }
+/* The stats strip: the board facts in one row, like the top boards' header stats. */
 /* The stats strip: the board facts in one row, like the top boards' header stats. */
 .stats {
   display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: var(--step-3);
-  padding: var(--step-2) 0 var(--step-2); border-bottom: 1px solid var(--border); margin-bottom: var(--step-2);
+  padding: 4px 0; border-bottom: 1px solid var(--border); margin-bottom: 4px;
 }
 .stat { display: grid; gap: 2px; }
 .stat span { color: var(--muted); font-size: 12px; }
 .stat b { font-family: var(--font-num); font-size: 15px; font-weight: 500; }
-/* Farm next: the five FARM plans paying the most net dollars per hour of work. */
-.farm-next { padding-bottom: var(--step-3); }
-.farm-next h2 { font-size: 16px; }
-.farm-next > .sub { margin: var(--step-1) 0 var(--step-3); }
-
-.top5 { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: var(--step-3); padding-bottom: var(--step-5); }
-.card {
-  background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-panel);
-  padding: var(--step-3); display: grid; gap: var(--step-1); cursor: pointer; text-align: left;
-}
-.card:hover { border-color: var(--accent); }
-.card .rank { font-family: var(--font-num); font-size: 12px; color: var(--accent); }
-.card b { font-size: 15px; line-height: 1.25; }
-.card .val { font-family: var(--font-num); font-size: 17px; font-weight: 600; }
-.card .sub { color: var(--muted); font-size: 12px; }
-
-.controls { display: flex; flex-wrap: wrap; align-items: end; gap: var(--step-3); padding: var(--step-2) 0; border-top: 1px solid var(--border); }
+.controls { display: flex; flex-wrap: wrap; align-items: end; gap: 6px; padding: 4px 0; border-top: 1px solid var(--border); }
 .field { display: grid; gap: var(--step-1); }
 .field label { color: var(--muted); font-size: 12px; }
 .field input, .field select {
-  min-height: 36px; padding: 0 var(--step-3); border: 1px solid var(--border); border-radius: var(--radius-control);
-  background: var(--surface-2); min-width: 160px;
+  min-height: 32px; padding: 0 6px; border: 1px solid var(--border); border-radius: var(--radius-control);
+  background: var(--surface-2); min-width: 110px; font-size: 13px;
 }
-.field input { min-width: 260px; }
+.field input { width: 150px; }
+#q { font-size: 12px; }
+.field select { max-width: 130px; }
 .tabs { display: flex; gap: var(--step-1); padding: 3px; border: 1px solid var(--border); border-radius: var(--radius-control); background: var(--surface); }
-.tabs button { min-height: 30px; padding: 0 var(--step-3); border: 0; border-radius: 6px; background: transparent; color: var(--muted); }
+.tabs button { min-height: 30px; padding: 0 6px; border: 0; border-radius: 6px; background: transparent; color: var(--muted); font-size: 12px; }
 .tabs button[aria-pressed="true"] { background: var(--accent); color: #06281c; font-weight: 600; }
 .count { margin-left: auto; color: var(--muted); font-size: 13px; align-self: center; }
 
 .panel { background: var(--surface); border: 1px solid var(--border); border-radius: var(--radius-panel); overflow: hidden; }
 .table-wrap { overflow-x: auto; }
-table { width: 100%; border-collapse: collapse; font-size: 14px; }
-th, td { padding: var(--step-3) var(--step-3); border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
+table { width: 100%; border-collapse: collapse; font-size: 12px; }
+th, td { padding: 2px var(--step-2); border-bottom: 1px solid var(--border); text-align: left; vertical-align: middle; }
 th { color: var(--muted); font-size: 12px; font-weight: 500; white-space: nowrap; }
 th button { display: inline-flex; align-items: center; gap: var(--step-1); border: 0; background: none; padding: 0; color: inherit; font: inherit; }
 th button:hover { color: var(--ink); }
@@ -119,12 +107,13 @@ tbody tr { cursor: pointer; }
 tbody tr:hover { background: var(--surface-2); }
 tbody tr[data-selected="true"] { background: rgba(52, 211, 153, 0.10); }
 .num { font-family: var(--font-num); font-variant-numeric: tabular-nums; white-space: nowrap; }
-.name { display: grid; gap: 2px; }
-.name b { font-weight: 600; }
-.sub { color: var(--muted); font-size: 12px; }
+.name { display: grid; gap: 0; max-width: 280px; }
+.name b { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.name .sub { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.sub { color: var(--muted); font-size: 10px; }
 .pos { color: var(--accent); }
 .neg { color: var(--negative); }
-.bar { width: 110px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; }
+.bar { width: 84px; height: 6px; border-radius: 3px; background: var(--border); overflow: hidden; flex: none; }
 .bar i { display: block; height: 100%; background: linear-gradient(90deg, var(--accent-2), var(--accent)); }
 .implied { display: flex; align-items: center; gap: var(--step-2); }
 .status { display: inline-flex; align-items: center; gap: 6px; color: var(--muted); font-size: 12px; white-space: nowrap; }
