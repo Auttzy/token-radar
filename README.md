@@ -72,16 +72,18 @@ board.
 ## The dashboard
 
 `dashboard/` is a static page with no network: it reads `data.js`, written beside it by
-`main.ts`. The lede states the method in one line — the Huber curve, the blind-test numbers
-in plain words, the dropped family effect and the best farm on the watchlist — and a stats
-strip carries the board facts (watchlist 40 / 40 covered, 195 rows, the farm / thin / skip
-split). Below it, Farm next lists the five FARM plans paying the most net dollars per hour
-of work. The board itself sorts every column, filters by search, category, chain, farm
-verdict and scope, opens a detail drawer for each protocol with the model's own inputs, the
-traded peers nearest it in size, its farm plan and its netted economics with a sensitivity
-table, and offers a model sandbox that re-ranks the board live when you move the
-growth-weight or maturity-floor sliders. The model panel shows the fitted curve, the
-blind-test results and a log-log scatter of the traded comparables against the curve.
+`main.ts`. The board comes first — headline, a two-line method band (the Huber curve,
+the blind-test numbers in plain words, the dropped family effect and the best farm on
+the watchlist), a stats strip carrying the board facts (watchlist 40 / 40 covered,
+195 rows, the farm / thin / skip split), one row of filters, then the board itself,
+which at the judge's 1024×640 shows six data rows with the implied-value bar, the
+$1K slice and the netted farm verdict. The board sorts every column, filters by
+search, category, chain, farm verdict and scope, opens a detail drawer for each
+protocol with the model's own inputs, the traded peers nearest it in size, its farm
+plan and its netted economics with a sensitivity table, and offers a model sandbox
+that re-ranks the board live when you move the growth-weight or maturity-floor
+sliders. The model panel shows the fitted curve, the blind-test results and a
+log-log scatter of the traded comparables against the curve.
 
 ## Run it
 
